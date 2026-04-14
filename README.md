@@ -1,4 +1,8 @@
 # CreatorMark 🔏
+
+> This was originally AI Generated. Please validate before taking legal action. Feel free to contribute.
+
+
 ### Cryptographic Evidence Toolkit for Creators
 
 Three tools that work together to register your work, detect AI memorization,
