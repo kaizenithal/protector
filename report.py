@@ -1,81 +1,122 @@
 #!/usr/bin/env python3
 """
-CreatorMark Evidence Toolkit — report.py
+Protector Evidence Toolkit — report.py
 Compiles watermark manifests + canary evidence into a
 structured legal report you can hand to a copyright attorney.
 """
 
-import json
-import sys
+import argparse
 import hashlib
-import hmac
+import hmac as _hmac
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-KEY_FILE     = Path.home() / ".creatormark" / "keys.json"
-MANIFEST_DIR = Path.home() / ".creatormark" / "manifests"
-CANARY_DIR   = Path.home() / ".creatormark" / "canaries"
-EVIDENCE_DIR = Path.home() / ".creatormark" / "evidence"
-REPORTS_DIR  = Path.home() / ".creatormark" / "reports"
+# Shared vault paths — must match watermark.py and canary.py
+KEY_FILE     = Path.home() / ".Protector" / "keys.json"
+MANIFEST_DIR = Path.home() / ".Protector" / "manifests"
+CANARY_DIR   = Path.home() / ".Protector" / "canaries"
+EVIDENCE_DIR = Path.home() / ".Protector" / "evidence"
+REPORTS_DIR  = Path.home() / ".Protector" / "reports"
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# KEY + HMAC HELPERS
+# ─────────────────────────────────────────────────────────────────────────────
 
 def load_secret(identity: str) -> bytes:
+    """
+    Load the signing key for `identity` from the local vault.
+    Returns empty bytes and prints a warning if the identity is not found —
+    all HMAC verification results will then show INVALID, which is misleading.
+    Callers should check the return value before trusting report output.
+    """
     if not KEY_FILE.exists():
+        print(f"[warn] Key file not found at {KEY_FILE}.")
+        print(f"       HMAC verification will be unreliable.")
         return b""
     with open(KEY_FILE) as f:
         keys = json.load(f)
-    rec = keys.get(identity, {})
+    if identity not in keys:
+        print(f"[warn] Identity '{identity}' not found in key vault.")
+        print(f"       All HMAC signatures will show INVALID in the report.")
+        print(f"       Check spelling or run: python watermark.py watermark <file> --identity \"{identity}\"")
+        return b""
+    rec = keys[identity]
     return bytes.fromhex(rec["secret"]) if "secret" in rec else b""
 
+def _sign(data: dict, secret: bytes) -> str:
+    payload = json.dumps(data, sort_keys=True).encode()
+    return _hmac.new(secret, payload, hashlib.sha256).hexdigest()
 
 def verify_hmac(record: dict, secret: bytes) -> bool:
+    """
+    Verify the HMAC signature of a manifest or canary record.
+    Handles both 'hmac_sha256' (manifests) and 'hmac' (canaries) key names.
+    Does not mutate the record.
+    """
     stored = record.get("hmac_sha256") or record.get("hmac", "")
-    clean  = {k: v for k, v in record.items() if k not in ("hmac_sha256", "hmac")}
-    payload = json.dumps(clean, sort_keys=True).encode()
-    expected = hmac.new(secret, payload, hashlib.sha256).hexdigest()
-    return hmac.compare_digest(stored, expected)
+    clean  = {k: v for k, v in record.items()
+               if k not in ("hmac_sha256", "hmac")}
+    expected = _sign(clean, secret)
+    return _hmac.compare_digest(stored, expected)
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# VAULT LOADER
+# ─────────────────────────────────────────────────────────────────────────────
 
 def load_all(identity: str) -> tuple[list, list, list]:
+    """Load all manifests, canaries, and evidence records for `identity`."""
     manifests, canaries, evidence = [], [], []
 
     if MANIFEST_DIR.exists():
         for f in sorted(MANIFEST_DIR.glob("*.json")):
-            r = json.load(open(f))
+            with open(f) as fh:
+                r = json.load(fh)
             if r.get("owner") == identity:
                 manifests.append(r)
 
     if CANARY_DIR.exists():
         for f in sorted(CANARY_DIR.glob("*.json")):
-            r = json.load(open(f))
+            with open(f) as fh:
+                r = json.load(fh)
             if r.get("identity") == identity:
                 canaries.append(r)
 
     if EVIDENCE_DIR.exists():
         for f in sorted(EVIDENCE_DIR.glob("*.json")):
-            r = json.load(open(f))
+            with open(f) as fh:
+                r = json.load(fh)
             if r.get("identity") == identity:
                 evidence.append(r)
 
     return manifests, canaries, evidence
 
 
-def generate_report(identity: str, output_format: str = "txt") -> Path:
-    secret = load_secret(identity)
-    manifests, canaries, evidence = load_all(identity)
+# ─────────────────────────────────────────────────────────────────────────────
+# REPORT GENERATOR
+# ─────────────────────────────────────────────────────────────────────────────
 
-    hits = [e for e in evidence if e.get("verbatim_match") or e.get("near_match")]
-    now  = datetime.now(timezone.utc).isoformat()
+def generate_report(identity: str, output_format: str = "txt") -> Path:
+    secret                    = load_secret(identity)
+    manifests, canaries, evidence = load_all(identity)
+    hits                      = [e for e in evidence
+                                  if e.get("verbatim_match") or e.get("near_match")]
+    now                       = datetime.now(timezone.utc).isoformat()
 
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
-    slug = now[:10].replace("-", "")
-    out  = REPORTS_DIR / f"evidence_report_{slug}.{'md' if output_format == 'md' else 'txt'}"
+
+    # Include time in slug so same-day runs do not overwrite each other
+    slug = now[:19].replace(":", "").replace("-", "").replace("T", "_")
+    ext  = "md" if output_format == "md" else "txt"
+    out  = REPORTS_DIR / f"evidence_report_{slug}.{ext}"
 
     lines = []
     w = lines.append
 
     w("=" * 72)
-    w("  CREATORMARK — COPYRIGHT EVIDENCE REPORT")
+    w("  Protector — COPYRIGHT EVIDENCE REPORT")
     w("=" * 72)
     w(f"  Identity   : {identity}")
     w(f"  Generated  : {now}")
@@ -137,7 +178,8 @@ def generate_report(identity: str, output_format: str = "txt") -> Path:
         w(f"  Probe type   : {e['probe_type']}")
         w(f"  Timestamp    : {e['timestamp_utc']}")
         w(f"  Prompt       : {e['prompt']}")
-        w(f"  Response     : {e['response'][:300]}{'...' if len(e['response']) > 300 else ''}")
+        # Full response preserved — do not truncate legal evidence
+        w(f"  Response     : {e['response']}")
         w(f"  Target phrase: \"{e['target_phrase']}\"")
         w(f"  Verbatim     : {'YES' if e['verbatim_match'] else 'No'}")
         w(f"  Near match   : {'YES' if e['near_match'] else 'No'}")
@@ -150,10 +192,10 @@ def generate_report(identity: str, output_format: str = "txt") -> Path:
     w("  SECTION 4 — SUMMARY FOR LEGAL COUNSEL")
     w("━" * 72)
     w("")
-    w(f"  This report was generated by CreatorMark, an open-source tool for")
-    w(f"  documenting copyright ownership and potential AI training violations.")
+    w("  This report was generated by Protector, an open-source tool for")
+    w("  documenting copyright ownership and potential AI training violations.")
     w("")
-    w(f"  Evidence summary:")
+    w("  Evidence summary:")
     w(f"    • {len(manifests)} original works with cryptographic registration timestamps")
     w(f"    • {len(canaries)} canary phrases embedded in published content")
     w(f"    • {len(evidence)} AI model probe responses logged")
@@ -167,7 +209,7 @@ def generate_report(identity: str, output_format: str = "txt") -> Path:
         w("")
         w("  Recommended next steps:")
         w("    1. Engage a copyright attorney specializing in AI/IP")
-        w("    2. Preserve ~/.creatormark/ directory as primary evidence")
+        w("    2. Preserve ~/.Protector/ directory as primary evidence")
         w("    3. Document the exact model version and access date for each probe")
         w("    4. Cross-reference with existing litigation:")
         w("       — NYT v. OpenAI (S.D.N.Y. 2023)")
@@ -201,11 +243,14 @@ def generate_report(identity: str, output_format: str = "txt") -> Path:
     return out
 
 
-def main():
-    import argparse
+# ─────────────────────────────────────────────────────────────────────────────
+# CLI
+# ─────────────────────────────────────────────────────────────────────────────
+
+def main() -> None:
     parser = argparse.ArgumentParser(
         prog="report",
-        description="Generate a legal evidence report from your CreatorMark records"
+        description="Generate a legal evidence report from your Protector records"
     )
     parser.add_argument("--identity", required=True, help="Your creator identity")
     parser.add_argument("--format", choices=["txt", "md"], default="txt",
@@ -216,7 +261,7 @@ def main():
     out = generate_report(args.identity, args.format)
     print(f"[report] ✓ Report saved: {out}")
     print(f"\n  This report is suitable for submission to a copyright attorney.")
-    print(f"  Back up ~/.creatormark/ — it is your complete evidence vault.")
+    print(f"  Back up ~/.Protector/ — it is your complete evidence vault.")
 
 
 if __name__ == "__main__":
