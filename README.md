@@ -1,4 +1,4 @@
-# CreatorMark 🔏
+# Protector 🔏
 
 > This was originally AI Generated. Please validate before taking legal action. Feel free to contribute.
 
