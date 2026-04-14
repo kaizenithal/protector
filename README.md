@@ -1,5 +1,4 @@
 # Protector 🔏
-# Protector 🔏
 
 >Engine to support setting up a pipeline to cover legal protection of your digital assets.
 
@@ -10,7 +9,7 @@ It watermarks your files, embeds invisible traceable phrases, probes AI
 models for memorization of your content, and compiles everything into a
 legal evidence report you can hand to a copyright attorney.
 
-This is free, open-source software licensed under GPL-3.0. It runs entirely
+This is free, open-source software. It runs entirely
 on your machine. Nothing is sent anywhere.
 
 ---
